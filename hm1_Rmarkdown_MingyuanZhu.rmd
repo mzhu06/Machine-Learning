@@ -1,0 +1,287 @@
+---
+author: "Mingyuan Zhu"
+title: "IST 707 Assignment 1 Report"
+output: html_document #render a html, you can include anything you need here
+---
+```{r Code chunk, include=FALSE}
+library(dplyr)
+library(arules)
+library(ggplot2)
+library(arulesViz)
+```
+
+1. Descriptive Statistics before data cleaning
+  + age
+```{r}
+data("AdultUCI", package = "arules")
+AU<- AdultUCI
+AU$age_grp <- discretize(AU$age, method = "frequency",
+                       breaks = 4, labels = c("Young","Middle-aged","Senior","Old" ))
+AU %>%
+  group_by(age_grp) %>%
+  summarize(ave_age = mean(age), count = n(), min = min(age), max = max(age))
+
+#age's boxplot and remove outliers
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+  qnt <- quantile(x, probs=c(.25, .75), na.rm = na.rm, ...)
+  H <- 1.5 * IQR(x, na.rm = na.rm)
+  y <- x
+  y[x < (qnt[1] - H)] <- NA
+  y[x > (qnt[2] + H)] <- NA
+  y
+}   # another way: AU$age[AU$age %in% boxplot.stats(AU$age)$OUT] <- median(AU$age, na.rm = T)
+
+AU$age = remove_outliers(AU$age)
+boxplot(AU$age ~ AU$age_grp) #check outliers' removing
+```
+  
+  + Workclass
+```{r}
+table_wc <- table(AU$workclass)
+
+reorder_wc <- function(x) { 
+  factor(x, levels = names(sort(table(x), decreasing = T)))
+}
+
+ggplot(AU, aes( x = reorder_wc(workclass))) + geom_bar() + xlab ("Workclass") + theme(axis.title.x = element_text(hjust = 1), plot.title = element_text("Workclass Frequency Table"))
+
+```
+  
+  + Education
+```{r}
+table(AU$education)
+```
+  
+  + Marital Status
+```{r}
+ggplot(AU, aes( x = reorder_wc(AU$`marital-status`))) + geom_bar() + xlab ("marital") + theme(axis.title.x = element_text(hjust = 1), plot.title = element_text("Marital"))
+```
+  
+  + Occupation
+```{r}
+table(AU$occupation)
+```
+  
+  + Relationship
+```{r}
+ggplot(AU, aes( x = reorder_wc(AU$relationship))) + geom_bar() + xlab ("Relationship") + theme(axis.title.x = element_text(hjust = 1), plot.title = element_text("Relationship"))
+```
+  
+  + Race
+```{r}
+ggplot(AU, aes( x = reorder_wc(AU$race))) + geom_bar() + xlab ("Race") + theme(axis.title.x = element_text(hjust = 1), plot.title = element_text("Race"))
+```
+  
+  + Sex
+```{r}
+ggplot(AU, aes( x = reorder_wc(AU$sex))) + geom_bar() + xlab ("Sex") + theme(axis.title.x = element_text(hjust = 1), plot.title = element_text("Sex"))
+```
+  
+  + Hours per week
+```{r}
+boxplot(AU$`hours-per-week`)
+
+AU$hrs_grp <- ordered(cut(AU[[ "hours-per-week"]],
+                                             c(0,25,40,60,168)),
+                                         labels = c("Part-time", "Full-time", "Over-time", "Workaholic"))
+
+#AU$hrs_grp <-discretize(AU$`hours-per-week`,method='frequency', breaks = 4, labels = c("Part-time","Full-time","Over-time","Too-much" ),order=T)
+
+AU %>%
+  group_by(hrs_grp) %>%
+  summarize(hrs_mean = mean(`hours-per-week`), count = n(), min = min(`hours-per-week`), max = max(`hours-per-week`))
+
+AU$hpw= remove_outliers(AU$`hours-per-week`)
+boxplot(AU$`hours-per-week` ~ AU$hrs_grp)
+```
+  
+  + income
+```{r}
+ggplot(AU, aes( x = reorder_wc(AU$income))) + geom_bar() + xlab ("Income") + theme(axis.title.x = element_text(hjust = 1), plot.title = element_text("Income"))
+```
+  
+
+2. Data cleaning, transformation, and descriptive statistics after step 2
+  + delete redundant and unuseful attributes
+```{r}
+AU$`education-num` = NULL 
+AU[["fnlwgt"]] = NULL
+AU[["age"]] = NULL
+AU[["hours-per-week"]] = NULL
+AU[["hpw"]] = NULL 
+```
+  
+  + combine and reduce attributes for workclass
+```{r}
+AU$workclass = gsub ("Without-pay", "No-work", AU$workclass)
+AU$workclass = gsub ("Never-worked", "No-work", AU$workclass)
+AU$workclass = gsub ("Local-gov", "Other-gov", AU$workclass)
+AU$workclass = gsub ("State-gov", "Other-gov", AU$workclass)
+AU$workclass = gsub ("Self-emp-inc", "Self-employed", AU$workclass)
+AU$workclass = gsub ("Self-emp-not-inc", "Self-employed", AU$workclass)
+table(AU$workclass)
+```
+  
+  + combine and reduce attributes for education
+```{r}
+#for thoes who attended drop out during primary school, middle school and high school, I put them together as drop-out
+AU$education = gsub("10th","Drop-out",AU$education)
+AU$education = gsub("11th","Drop-out",AU$education)
+AU$education = gsub("12th","Drop-out",AU$education)
+AU$education = gsub("1st-4th","Drop-out",AU$education)
+AU$education = gsub("5th-6th","Drop-out",AU$education)
+AU$education = gsub("7th-8th","Drop-out",AU$education)
+AU$education = gsub("9th","Drop-out",AU$education)
+AU$education = gsub("^Preschool","Drop-out",AU$education)
+#people who received high school degree, or attended college but drop out, I put them together as HS-Graduate
+AU$education = gsub("HS-Grad","HS-Grad",AU$education)
+AU$education = gsub("Some-college","HS-Grad",AU$education)
+AU$education = gsub("Prof-school","Prof-School",AU$education)
+AU$education = gsub("Assoc-acdm","Associates",AU$education)
+AU$education = gsub("Assoc-voc","Associates",AU$education)
+AU$education = gsub("Bachelors","Bachelors",AU$education)
+AU$education = gsub("Doctorate","Doctorate",AU$education)
+AU$education = gsub("Masters","Masters",AU$education)
+table(AU$education)
+ggplot(AU, aes( x = reorder_wc(education))) + geom_bar() + xlab ("education") + theme(axis.title.x = element_text(hjust=1), plot.title = element_text("Education Frequency Table"))
+```
+  
+  + transform the capital-gain & loss from integer to ordered factor data type
+```{r}
+AU[["capital-gain"]] <- ordered(cut(AU$`capital-gain`, c(-Inf, 0,
+                                median(AU[["capital-gain"]][AU[["capital-gain"]]>0]),
+                                Inf)), labels = c("None", "Low-gain", "High-gain"))
+AU[["capital-loss"]] <- ordered(cut(AU$`capital-loss`, c(-Inf, 0,
+                                median(AU[["capital-loss"]][AU[["capital-loss"]]>0]),
+                                Inf)), labels = c("None", "Low-loss", "High-loss"))
+
+table(AU$`capital-gain`)
+table(AU$`capital-loss`)
+```
+  
+  + check the rest categorical variables
+```{r code chunk, include  = FALSE}
+names(AU)[3] <- "marital"
+table(AU$marital)
+table(AU$occupation)
+table(AU$relationship)
+table(AU$race)
+table(AU$sex)
+table(AU$`native-country`)
+table(AU$income)
+```
+  
+  + remove N/A value
+```{r}
+is.na(AU) = AU =='?'
+is.na(AU) = AU ==' ?'
+AU_clean = na.omit(AU)
+```
+  
+  + transform data.frame into factor data type
+```{r}
+AU_clean$workclass <- as.factor(AU_clean$workclass)
+AU_clean$education <- as.factor(AU_clean$education)
+str(AU_clean)
+```
+  
+3. Run association rule mining algorithm using default settings
++ method 1: run directly
+```{r}
+rules_record1 <- apriori(AU_clean, 
+                        parameter = list(support = 0.1, confidence = 0.8, minlen = 1))
+inspect(head(rules_record1,10))
+```
+
++ method 2: prepare a transaction dataset
+```{r}
+adult <- as(AU_clean, "transactions")
+inspect(head(adult, 2))
+
+rules_transaction <- apriori(AU_clean, parameter = NULL, control = NULL)
+inspect(head(rules_transaction, 10))
+quality(head(rules_transaction, 5))
+```
+
+4. Fine tune the model by experimenting with different algorithm parameters
+  + rules_transaction 1
+```{r}
+rules_transaction1 <- apriori(adult, 
+                              parameter = list(support = 0.1, confidence = 0.8, minlen = 2))
+inspect(head(rules_transaction1, 10))
+```
+
+  + rules_transaction 2
+```{r}
+rules_transaction2 <- apriori(adult, 
+                              parameter = list(support = 0.1, confidence = 0.5, minlen = 3))
+inspect(head(rules_transaction2, 10))
+```
+
+  + rules_transaction 3
+```{r}
+rules_transaction3 <- apriori(adult, 
+                              parameter = list(support = 0.3, confidence = 0.5, minlen = 3))
+inspect(head(rules_transaction3, 10))
+```
+
+  + rules_transaction 4
+```{r}
+rules_transaction4 <- apriori(adult, 
+                              parameter = list(support = 0.5, confidence = 0.8, minlen = 2))
+inspect(head(rules_transaction4, 10))
+quality(head(rules_transaction4, 5)) 
+```
+
+  + rules_transaction 5
+```{r}
+rules_transaction5 <- apriori(adult, 
+                              parameter = list(support = 0.5, confidence = 0.8, minlen = 3))
+inspect(head(rules_transaction5, 10))
+```
+
+  + frequent items plot
+```{r}
+frequent_items <- eclat(adult, parameter = list(support = 0.8, minlen = 2))
+inspect(head(frequent_items, 2))
+itemFrequencyPlot(adult, topN = 6, type = "absolute", main = "Item frequency")
+```
+
+5. Output and present the most interesting and significant rules which could predict "income"
+  + significant rules which could predict large income
+```{r}
+rules_larInc <- apriori(data = AU_clean, parameter = list(supp = 0.08, conf = 0.5, minlen = 2),
+                 appearance = list(rhs ="income=large"))
+inspect(head(rules_larInc, 10))
+plot(rules_larInc, measure = c("support", "lift"), shading = "confidence")
+```
+  
+  + significant rules which could predict small income
+```{r}
+rules_smInc<- apriori(data = AU_clean, parameter = list(supp = 0.08, conf = 0.5, minlen = 2),
+                      appearance = list(rhs ="income=small"))
+inspect(head(rules_smInc, 10))
+plot(rules_smInc, measure = c("support", "lift"), shading = "confidence")
+```
+  
+6. Provide interpretations of the above chosen association rules and also discuss why you consider them interesting and significant
+  + For the first association rules which predicts the large income(rules_larInc), I set support to be 0.08 because this is the biggest support that can retrieve data, and any value larger than 0.08 didn't retrive any rules for the rules. 
+  Support 0.08 means that the minimum probability of any items in lhs and large income happen together will be 0.08. Take example of the first rule, a peopel who a hunsband, who works over-time per week, and who earn large income are 8% to be happen together.
+  Confidence 0.5 means that the minimum probability of large income based on any times in lhs will be 0.5. It works as a conditional probability for large income. Take the same example discussed above, if a perpson is known to be a hunsband and working over time per week, he has 50% to earn large income. 
+  
+  + For the first association rules which predicts the small income(rules_smInc), I alsoset support to be 0.08 because this is the biggest support that can retrieve data, and any value larger than 0.08 didn't retrive any rules for the rules.
+  Support 0.08 means that the minimum probability of any items in lhs and small income happen together will be 0.08. Take example of the first rule, the probability of a person to be African American and to have small income is 8%
+  Confidence 0.5 means that the minimum probability of large income based on any times in lhs will be 0.5. So, if a people is African American, there is 50% probabily that the person will have small income
+7. Shiny App: http://127.0.0.1:5860
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  

@@ -1,0 +1,201 @@
+---
+title: "IST 707 Assignment 2 Report"
+author: "Mingyuan Zhu"
+output:pdf_document: default
+---
+```{r Code chunk, include=FALSE}
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(factoextra)
+library(e1071)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+```
+### Section 1: Data preparation
+- loading data, removing NA, standardization
+```{r}
+essay <- read.csv("C:/Users/Mingy/Desktop/IST 707 Data Analytics/Assignment 2/Disputed_Essay_data.csv", header = T, stringsAsFactors = F)
+df <- data.frame(essay)
+df <- na.omit(df)
+df[,3:72] <- scale(df[,3:72], center = T, scale = T) 
+```
+- deleting the author and columns that are not correlatd to our analysis targets
+```{r}
+df <- df[df$author != "Jay", ]
+df <- df[, -2]
+```
+- setting the data with author = 'dispt' as predicting dataset
+```{r}
+dispt <- df[df$author == "dispt", ]
+nondispt <- df[df$author != "dispt", ]
+```
+- spliting nondispt data into training and testing dataset by ratio of 80% and 20%
+```{r}
+set.seed(100)
+train_size = floor(0.8 * nrow(nondispt))
+train_int <- sample(seq_len(nrow(nondispt)), size = train_size)
+train <- nondispt[train_int, ]
+valid <- nondispt[-train_int, ]
+```
+
+### Section 2: Build and tune cluster analysis and decision tree models
+####Clustering
+#####K-means 
+- Before analysis, I displyed where the disputed papers and joint authoriship papers located by k-mean clustering. As we can see, the paper with joint authorship are showned as a very small cluster in the following picture.
+```{r}
+km_all <- kmeans(df[, 3:71], centers = 6, nstart = 25, iter.max = 100, algorithm = "Hartigan-Wong")
+cluster_all <- data.frame(author = df$author, cluster = unname(km_all$cluster))
+table(cluster_all)
+fviz_cluster(km_all, data = df[, 3:71])
+```
+
+- Elbow method to decide Optimal Number of Clusters
+```{r}
+set.seed(8)
+wss <- function(k){
+  return(kmeans(df[, 3:71], k, nstart = 25)$tot.withinss)
+}
+
+k_values <- 1:25
+
+wss_values <- purrr::map_dbl(k_values, wss)
+
+plot(x = k_values, y = wss_values, 
+     type = "b", frame = F,
+     xlab = "Number of clusters K",
+     ylab = "Total within-clusters sum of square")
+
+```
+
+- Tuning different k-means models. Here, I didn't use the training & testing dataset from above, because I think clustering is an unsurpervised algorithms, and in order to predict the clusters of dispt authors data, we need to take into consider of all data's attributes to calculate the centers
+```{r}
+km_output <- kmeans(nondispt[, 3:71], centers = 2, nstart = 25, iter.max = 100, algorithm = "Hartigan-Wong")
+km_output1 <- kmeans(nondispt[, 3:71], centers = 3, nstart = 25, iter.max = 100, algorithm = "Hartigan-Wong")
+km_output2 <- kmeans(nondispt[, 3:71], centers = 4, nstart = 25, iter.max = 100, algorithm = "Hartigan-Wong")
+km_output3 <- kmeans(nondispt[, 3:71], centers = 6, nstart = 10, iter.max = 100, algorithm = "Hartigan-Wong")
+```
+
+- SSE
+```{r}
+sum(c(km_output$withinss, km_output$betweenss))
+sum(c(km_output1$withinss, km_output1$betweenss))
+sum(c(km_output2$withinss, km_output2$betweenss))
+sum(c(km_output3$withinss, km_output3$betweenss))
+```
+
+- Combining cluster with label author
+```{r}
+cluster_df <- data.frame(author = nondispt$author, cluster = unname(km_output$cluster))
+cluster_df1 <- data.frame(author = nondispt$author, cluster = unname(km_output1$cluster))
+cluster_df2 <- data.frame(author = nondispt$author, cluster = unname(km_output2$cluster))
+cluster_df3 <- data.frame(author = nondispt$author, cluster = unname(km_output3$cluster))
+```
+
+- Tables of all clusters models. The cluster_df3 model is the best one because all authors labels fall into different clusters
+```{r}
+table(cluster_df)
+table(cluster_df1)
+table(cluster_df2)
+table(cluster_df3)
+```
+- Visualization of choosen model 
+```{r}
+fviz_cluster(km_output3, data = nondispt[, 3:71])
+```
+
+
+
+#####HAC 
+```{r}
+df1 <- df
+row.names(df1) <- make.names(df[, 1], TRUE)
+hac_output <- hclust(dist(df1[, 3:71], method = "euclidean"), method = "complete")
+# cut tree at height 6
+hac_cut <- cutree(hac_output, 6)
+table(hac_cut)
+plot(hac_output)
+hac_cut
+
+
+```
+Even though we can approximately find out that dispt papers fall in to the same cluster as Madison's, but there are still many different clusters for each author. This method cound't provide a better result than k-means in this case.
+
+#####Decision tree 
+- Default setting
+```{r}
+dt_model <- train(author ~ ., data = train, metric = 'Accuracy', method = 'rpart')
+print(dt_model)
+print(dt_model$finalModel)
+```
+
+- Model tuning
+```{r}
+dt_model_tune <- train(author~ ., data = train, method = 'rpart'
+                       , metric = 'Accuracy', tuneLength = 8)
+print(dt_model_tune)
+dt_model_tune2 <- train(author~ ., data = train, method = 'rpart'
+                        , tuneGrid = expand.grid(cp = seq(0, 0.1, 0.01)))
+print(dt_model_tune2)
+dt_model_preprune <- train(author~ ., data = train, method = 'rpart'
+                           , metric = 'Accuracy'
+                           , tuneLength = 8
+                           , control = rpart.control(minsplit = 5, minbucket = 5, maxdepth = 5))
+print(dt_model_preprune)
+dt_model_postprune <- prune(dt_model$finalModel, cp = 0.2)
+print(dt_model_postprune)
+```
+
+- Visualization
+```{r}
+rpart.plot(dt_model$finalModel)
+```
+```{r}
+rpart.plot(dt_model_tune$finalModel)
+```
+```{r}
+rpart.plot(dt_model_tune2$finalModel)
+```
+```{r}
+rpart.plot(dt_model_preprune$finalModel)
+```
+
+### Section 3: Prediction and interpretation
+I have a consistent result from clustering and decision tree, which displayed a higher probability of authoriship for Madison.
+
+- K-means model on validationdataset. 
+```{r}
+km_valid <- kmeans(valid[, 3:71], centers = 6, nstart = 10, iter.max = 100, algorithm = "Hartigan-Wong")
+sum(c(km_valid$withinss, km_valid$betweenss))
+cluster_valid<- data.frame(author = valid$author, cluster = unname(km_valid$cluster))
+table(cluster_valid)
+cluster_valid
+error_rate = 0 #all the result are clustered correctly
+```
+
+- Decision tree: dt_model on validation dataset. And we can see that the model perfom an error rate of 14.29% on validation dataset.
+```{r}
+dt_valid <- predict(dt_model, newdata = valid, na.action = na.omit, type = 'prob')
+compare <- data.frame(valid$author, dt_valid)
+```
+```{r}
+compare
+table(compare)
+error_rate = 2/14 #0.1429 two data are not classified under correct authors
+```
+
+- Prediction by k-means model. Here, I predicted the dispt papers's author by using all datasets. Because I think clustering is an unsurpervised algorithms, and in order to predict the clusters of dispt authors data, we need to take into consider of all data's attributes to calculate the centers. Since most dispt papers fall into the same cluster with Madison, the analysis prove that all dispt papers belong to Madison
+```{r}
+km_predic <- kmeans(df[, 3:71], centers = 6, nstart = 10, iter.max = 100, algorithm = "Hartigan-Wong")
+sum(c(km_predic$withinss, km_predic$betweenss))
+cluster_predic<- data.frame(author = df$author, cluster = unname(km_predic$cluster))
+table(cluster_predic)
+```
+
+- Prediction by decision tree. And the result showed that all the papers have a much higher probability in belonging to Madison
+```{r}
+dt_valid <- predict(dt_model, newdata = dispt, na.action = na.omit, type = 'prob')
+compare <- data.frame(dispt$author, dt_valid)
+compare
+```
